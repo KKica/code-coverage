@@ -1,0 +1,96 @@
+name: 'Code Coverage Action'
+description: 'A GitHub Action to process COBERTURA code coverage reports and fail if coverage is too low'
+inputs:
+  code_coverage_artifacts_name:
+    description: 'The name of the code coverage artifacts'
+    required: false
+  coverage_directory:
+    description: 'The directory to store the coverage results'
+    required: true
+    default: 'coverage'
+  coverage_results_path:
+    description: 'The path to the coverage results file'
+    required: true
+    default: 'code-coverage-results.md'
+  minimum_coverage:
+    description: 'The minimum acceptable code coverage percentage'
+    required: false
+    default: ''
+  add_pr_comment:
+    description: 'Add coverage comment to PR'
+    required: false
+    default: 'true'
+  add_to_summary:
+    description: 'Add coverage report to job summary'
+    required: false
+    default: 'true'
+  delete_artifact:
+    description: 'Delete the code coverage artifact after use'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download test coverage artifacts
+      if: ${{ inputs.code_coverage_artifacts_name != '' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.code_coverage_artifacts_name }}
+        path: ./${{ inputs.coverage_directory }}
+
+    - name: Generate code Coverage Summary Report
+      uses: irongut/CodeCoverageSummary@v1.3.0
+      with:
+        filename: '${{ inputs.coverage_directory }}/*/coverage.cobertura.xml'
+        badge: true
+        format: 'markdown'
+        output: 'both'
+
+    - name: Add Coverage PR Comment
+      if: ${{ inputs.add_pr_comment == 'true' && github.event_name == 'pull_request' }}
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        recreate: true
+        path: ${{ inputs.coverage_results_path }}
+
+    - name: Write Coverage to Job Summary
+      if: ${{ inputs.add_to_summary == 'true' }}
+      run: cat ${{ inputs.coverage_results_path }} >> $GITHUB_STEP_SUMMARY
+
+    - name: Parse code coverage from the markdown file
+      if: ${{ inputs.minimum_coverage != '' }}
+      shell: bash
+      run: |
+        # Extract the last line
+        last_line=$(tail -n 1 ${{ inputs.coverage_results_path }})
+        echo "Code coverage summary: $last_line"
+        # Extract line-rate and branch-rate using regex
+        if [[ "$last_line" =~ \*\*Summary\*\*.*\*\*([0-9]+)%\*\*.*\*\*([0-9]+)%\*\* ]]; then
+          line_rate="${BASH_REMATCH[1]}"
+          branch_rate="${BASH_REMATCH[2]}"
+        else
+          echo "Could not parse coverage percentages"
+          exit 1
+        fi
+        # Log the extracted rates
+        echo "Line Rate: $line_rate%"
+        echo "Branch Rate: $branch_rate%"
+        # Set the rates as environment variables
+        echo "line_rate=$line_rate" >> $GITHUB_ENV
+        echo "branch_rate=$branch_rate" >> $GITHUB_ENV
+
+    - name: Fail workflow if coverage is too low
+      if: ${{ inputs.minimum_coverage != '' }}
+      shell: bash
+      run: |
+        if (( line_rate < ${{ inputs.minimum_coverage }} || branch_rate < ${{ inputs.minimum_coverage }} )); then
+          echo "Code coverage is too low"
+          exit 1
+        fi
+
+    - name: Delete code coverage artifact
+      if: ${{ inputs.delete_artifact == 'true' && inputs.code_coverage_artifacts_name != '' }}
+      uses: geekyeggo/delete-artifact@v5
+      with:
+        name: ${{ inputs.code_coverage_artifacts_name }}
