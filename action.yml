@@ -56,6 +56,7 @@ runs:
 
     - name: Write Coverage to Job Summary
       if: ${{ inputs.add_to_summary == 'true' }}
+      shell: bash
       run: cat ${{ inputs.coverage_results_path }} >> $GITHUB_STEP_SUMMARY
 
     - name: Parse code coverage from the markdown file
